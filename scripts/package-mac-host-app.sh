@@ -10,18 +10,29 @@ RESOURCES_DIR="$CONTENTS_DIR/Resources"
 APK_PATH="$ROOT_DIR/AndroidReceiver/app/build/outputs/apk/debug/android-receiver-debug.apk"
 APP_ICON_PATH="$MAC_DIR/Resources/AppIcon.icns"
 JAVA_HOME_DEFAULT="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
+GRADLE_JAVA_HOME="${JAVA_HOME:-}"
+
+if [[ -z "$GRADLE_JAVA_HOME" || ! -x "$GRADLE_JAVA_HOME/bin/java" ]]; then
+    if [[ -x "$JAVA_HOME_DEFAULT/bin/java" ]]; then
+        GRADLE_JAVA_HOME="$JAVA_HOME_DEFAULT"
+    else
+        GRADLE_JAVA_HOME=""
+    fi
+fi
 
 echo "==> Building AndroidReceiver debug APK"
-if [[ -x "$JAVA_HOME_DEFAULT/bin/java" ]]; then
+if [[ -n "$GRADLE_JAVA_HOME" ]]; then
     (
         cd "$ROOT_DIR"
-        JAVA_HOME="$JAVA_HOME_DEFAULT" ./gradlew :android-receiver:assembleDebug
+        JAVA_HOME="$GRADLE_JAVA_HOME" ./gradlew :android-receiver:assembleDebug \
+            -Dorg.gradle.java.home="$GRADLE_JAVA_HOME" \
+            --no-daemon
     )
 elif [[ ! -s "$APK_PATH" ]]; then
-    echo "[FAIL] Android Studio JBR was not found and no existing APK is available: $APK_PATH" >&2
+    echo "[FAIL] No usable JAVA_HOME / Android Studio JBR was found and no existing APK is available: $APK_PATH" >&2
     exit 1
 else
-    echo "[WARN] Android Studio JBR was not found; reusing existing APK: $APK_PATH"
+    echo "[WARN] No usable JAVA_HOME / Android Studio JBR was found; reusing existing APK: $APK_PATH"
 fi
 
 if [[ ! -s "$APK_PATH" ]]; then

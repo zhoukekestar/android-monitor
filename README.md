@@ -8,6 +8,21 @@
 
 目标流程是：双击 Mac app，选择手机，点击开始。Android 客户端会自动检测，没装就自动安装。
 
+### 从 GitHub Release 下载
+
+发布版会在 GitHub Release 里提供 `Android-Monitor-Host-<version>.zip`。
+
+1. 下载并解压 zip。
+2. 打开 `Android Monitor Host.app`。
+3. 连接 Android 手机并允许 USB 调试。
+4. 选择投屏设备，点击“开始扩展屏”。
+
+APK 已经内置在 Mac app 里，不需要单独下载或手动安装 Android 客户端。
+
+首次打开如果被 macOS 拦截，右键 app 选择“打开”，或到系统设置的“隐私与安全”里允许打开。
+
+### 本地打包
+
 1. 先打包一次应用：
 
 ```sh
@@ -136,6 +151,27 @@ JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" ./gradle
 
 ```sh
 scripts/phase0-stream-test.sh --width 1024 --height 600 --fps 30 --bitrate-mbps 3 --duration 20 --test-content-window --require-real-capture --min-decoded-frames 300 --min-input-fps 20
+```
+
+## GitHub Release 构建
+
+仓库包含 GitHub Actions workflow：[.github/workflows/release.yml](.github/workflows/release.yml)。
+
+推送 `v*` tag 会自动：
+
+- 设置 JDK 和 Android SDK。
+- 运行 Android 单元测试。
+- 构建 Android APK。
+- 构建 Mac Host app。
+- 把 `android-receiver-debug.apk` 放入 `Android Monitor Host.app/Contents/Resources/`。
+- 将 Mac app 压缩为 `Android-Monitor-Host-<version>.zip`。
+- 上传 zip 和 sha256 到 GitHub Release。
+
+发版命令示例：
+
+```sh
+git tag v0.1.0
+git push origin v0.1.0
 ```
 
 ## 进一步文档
