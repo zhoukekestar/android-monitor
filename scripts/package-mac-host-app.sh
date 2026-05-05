@@ -8,6 +8,7 @@ CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
 APK_PATH="$ROOT_DIR/AndroidReceiver/app/build/outputs/apk/debug/android-receiver-debug.apk"
+APP_ICON_PATH="$MAC_DIR/Resources/AppIcon.icns"
 JAVA_HOME_DEFAULT="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 
 echo "==> Building AndroidReceiver debug APK"
@@ -43,6 +44,11 @@ cp "$MAC_DIR/.build/release/android-monitor-host" "$MACOS_DIR/Android Monitor Ho
 cp "$MAC_DIR/.build/release/phase0-spike" "$MACOS_DIR/phase0-spike"
 cp "$MAC_DIR/.build/release/status-panel-server" "$MACOS_DIR/status-panel-server"
 cp "$APK_PATH" "$RESOURCES_DIR/android-receiver-debug.apk"
+if [[ -s "$APP_ICON_PATH" ]]; then
+    cp "$APP_ICON_PATH" "$RESOURCES_DIR/AppIcon.icns"
+else
+    echo "[WARN] AppIcon.icns not found at $APP_ICON_PATH; bundle will use the default icon. Run scripts/generate-icons.py to create it."
+fi
 chmod +x "$MACOS_DIR/Android Monitor Host" "$MACOS_DIR/phase0-spike" "$MACOS_DIR/status-panel-server"
 
 cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
@@ -54,6 +60,10 @@ cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
     <string>en</string>
     <key>CFBundleExecutable</key>
     <string>Android Monitor Host</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+    <key>CFBundleIconName</key>
+    <string>AppIcon</string>
     <key>CFBundleIdentifier</key>
     <string>local.android-monitor.host</string>
     <key>CFBundleInfoDictionaryVersion</key>
