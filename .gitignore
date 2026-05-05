@@ -1,0 +1,19 @@
+.DS_Store
+
+# Swift Package Manager
+MacHost/.build/
+MacHost/.swiftpm/
+phase0.h264
+
+# Android / Gradle
+.gradle/
+build/
+local.properties
+AndroidReceiver/.gradle/
+AndroidReceiver/local.properties
+AndroidReceiver/app/build/
+AndroidReceiver/build/
+
+# Local captures and logs
+*.h264
+*.log

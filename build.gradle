@@ -1,0 +1,51 @@
+plugins {
+    id "com.android.application" version "8.4.0" apply false
+}
+
+def androidSdkDir = {
+    def localPropertiesFile = rootProject.file("local.properties")
+    if (localPropertiesFile.exists()) {
+        def properties = new Properties()
+        localPropertiesFile.withInputStream { properties.load(it) }
+        def sdkDir = properties.getProperty("sdk.dir")
+        if (sdkDir) {
+            return file(sdkDir)
+        }
+    }
+
+    def androidHome = providers.environmentVariable("ANDROID_HOME").orNull
+    if (androidHome) {
+        return file(androidHome)
+    }
+
+    def androidSdkRoot = providers.environmentVariable("ANDROID_SDK_ROOT").orNull
+    if (androidSdkRoot) {
+        return file(androidSdkRoot)
+    }
+
+    return file("${System.properties["user.home"]}/Library/Android/sdk")
+}
+
+def adbExecutable = {
+    def executableName = org.gradle.internal.os.OperatingSystem.current().isWindows() ? "adb.exe" : "adb"
+    return new File(androidSdkDir(), "platform-tools/${executableName}")
+}
+
+tasks.register("installReceiverDebug", Exec) {
+    group = "android monitor"
+    description = "Builds AndroidReceiver and installs it with classic adb install for Android 5/MIUI devices."
+    dependsOn(":android-receiver:assembleDebug")
+
+    def apkPath = layout.projectDirectory.file("AndroidReceiver/app/build/outputs/apk/debug/android-receiver-debug.apk")
+    executable = adbExecutable().absolutePath
+    args("install", "-r", "-d", apkPath.asFile.absolutePath)
+}
+
+tasks.register("runReceiverDebug", Exec) {
+    group = "android monitor"
+    description = "Installs AndroidReceiver with adb and launches it on the connected device."
+    dependsOn("installReceiverDebug")
+
+    executable = adbExecutable().absolutePath
+    args("shell", "monkey", "-p", "com.androidmonitor.receiver", "1")
+}
