@@ -57,13 +57,13 @@ def draw_mark(canvas: Image.Image, *, scale: float = 1.0) -> None:
     """
     s = canvas.size[0]
     cx, cy = s / 2, s / 2
-    # Phone body — biased downward so the broadcast arcs above stay inside
-    # the rounded-square mask.
-    pw = s * 0.42 * scale
-    ph = s * 0.58 * scale
+    # Phone body — biased downward so the broadcast arcs above sit safely
+    # inside the inscribed circle (round-icon / squircle masks).
+    pw = s * 0.40 * scale
+    ph = s * 0.54 * scale
     line_w = max(2, int(s * 0.030 * scale))
     pr = s * 0.07 * scale
-    px0, py0 = cx - pw / 2, cy - ph / 2 + s * 0.09 * scale
+    px0, py0 = cx - pw / 2, cy - ph / 2 + s * 0.13 * scale
     px1, py1 = px0 + pw, py0 + ph
 
     # Mark layer (so soft glow sits on top of bg without bleeding past mask)
@@ -102,11 +102,14 @@ def draw_mark(canvas: Image.Image, *, scale: float = 1.0) -> None:
     ]
     md.polygon(triangle, fill=ACCENT)
 
-    # Broadcast arcs above the phone (two concentric arcs)
+    # Broadcast arcs above the phone (two concentric arcs). Sized so the
+    # outermost arc — including its stroke — fits inside the inscribed circle
+    # of the icon canvas, so circular and squircle launcher masks don't clip
+    # the wifi shape.
     arc_cx = cx
-    arc_cy = py0 - s * 0.01 * scale
-    arc_w = max(2, int(s * 0.022 * scale))
-    for radius_factor in (0.14, 0.23):
+    arc_cy = py0 - s * 0.012 * scale
+    arc_w = max(2, int(s * 0.020 * scale))
+    for radius_factor in (0.11, 0.18):
         rad = s * radius_factor * scale
         bbox = (arc_cx - rad, arc_cy - rad, arc_cx + rad, arc_cy + rad)
         md.arc(bbox, start=215, end=325, fill=WHITE, width=arc_w)
