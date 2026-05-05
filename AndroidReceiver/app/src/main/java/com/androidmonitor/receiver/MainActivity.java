@@ -69,6 +69,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         mainHandler = new Handler(Looper.getMainLooper());
         touchInputEnabled = getIntent().getBooleanExtra("touch_enabled", false);
         debugInputLogging = getIntent().getBooleanExtra("debug_input_logging", false);
+        mode = getIntent().getBooleanExtra("status_mode", false) ? MODE_STATUS : MODE_DISPLAY;
         if (debugInputLogging) {
             Log.i(TAG, "Touch input initial state: " + touchInputEnabled);
         }
@@ -94,7 +95,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         statusPanel.setGravity(Gravity.START | Gravity.TOP);
         statusPanel.setMovementMethod(new ScrollingMovementMethod());
         statusPanel.setPadding(18, 16, 18, 80);
-        statusPanel.setVisibility(View.GONE);
+        statusPanel.setVisibility(mode == MODE_STATUS ? View.VISIBLE : View.GONE);
 
         modeButton = new TextView(this);
         modeButton.setTextColor(Color.WHITE);
@@ -102,7 +103,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         modeButton.setTypeface(Typeface.DEFAULT_BOLD);
         modeButton.setTextSize(13);
         modeButton.setPadding(18, 12, 18, 12);
-        modeButton.setText("Status");
+        modeButton.setText(mode == MODE_STATUS ? "Display" : "Status");
 
         FrameLayout.LayoutParams overlayParams = new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.WRAP_CONTENT,
@@ -129,6 +130,8 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         root.addView(overlay, overlayParams);
         root.addView(modeButton, modeParams);
         setContentView(root);
+        surfaceView.setVisibility(mode == MODE_STATUS ? View.GONE : View.VISIBLE);
+        overlay.setVisibility(mode == MODE_STATUS ? View.GONE : View.VISIBLE);
 
         surfaceView.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -170,6 +173,9 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
                 toggleMode();
             }
         });
+        if (mode == MODE_STATUS) {
+            startStatusClient();
+        }
     }
 
     @Override
