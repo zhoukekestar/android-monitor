@@ -1,0 +1,103 @@
+name: Build & Release
+
+# Push a tag like v0.1.0 to publish a release. The workflow_dispatch entry
+# lets you build a zip from any branch without publishing.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write  # required for softprops/action-gh-release to upload assets
+
+jobs:
+  build:
+    name: Build Android APK + macOS Host app
+    runs-on: macos-14
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        # cmdline-tools + license acceptance only; AGP will pull whatever
+        # platform / build-tools version compileSdk 36 needs on first run.
+
+      # gradle.properties hardcodes org.gradle.java.home to the local
+      # Android Studio JBR; override at the command line so the runner-provided
+      # JDK is used by the daemon.
+      - name: Build Android debug APK
+        run: |
+          ./gradlew :android-receiver:assembleDebug \
+            -Dorg.gradle.java.home="$JAVA_HOME" \
+            --no-daemon
+          test -s AndroidReceiver/app/build/outputs/apk/debug/android-receiver-debug.apk
+
+      # The packaging script builds the Swift release products, copies the
+      # APK into Contents/Resources, writes Info.plist, and ad-hoc signs the
+      # bundle. It detects the missing Android Studio JBR and reuses the APK
+      # we just built.
+      - name: Package macOS Host app
+        run: ./scripts/package-mac-host-app.sh
+
+      - name: Resolve release name
+        id: meta
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            echo "name=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          fi
+
+      # `ditto -c -k --keepParent --sequesterRsrc` is the Apple-recommended way
+      # to zip an .app bundle: preserves resource forks, metadata, and the
+      # ad-hoc signature so Gatekeeper doesn't reject it on extract.
+      - name: Zip Mac app bundle
+        env:
+          NAME: ${{ steps.meta.outputs.name }}
+        run: |
+          cd MacHost/build
+          ZIP_NAME="Android-Monitor-Host-${NAME}.zip"
+          ditto -c -k --keepParent --sequesterRsrc \
+            "Android Monitor Host.app" "${ZIP_NAME}"
+          ls -la "${ZIP_NAME}"
+          shasum -a 256 "${ZIP_NAME}" | tee "${ZIP_NAME}.sha256"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Android-Monitor-Host-${{ steps.meta.outputs.name }}
+          path: |
+            MacHost/build/Android-Monitor-Host-*.zip
+            MacHost/build/Android-Monitor-Host-*.zip.sha256
+          if-no-files-found: error
+
+      # Only publish a Release when triggered by a tag push.
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            MacHost/build/Android-Monitor-Host-*.zip
+            MacHost/build/Android-Monitor-Host-*.zip.sha256
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          body: |
+            ## Install
+
+            1. Download `Android-Monitor-Host-<version>.zip` and unzip it.
+            2. Move `Android Monitor Host.app` to `/Applications`.
+            3. The app is **ad-hoc signed**, so Gatekeeper will block the first launch. Either:
+               - Right-click the app → **Open**, then confirm in the dialog, **or**
+               - Run `xattr -d com.apple.quarantine "/Applications/Android Monitor Host.app"`.
+            4. Connect your Android device over USB (USB debugging enabled). The host app will install the bundled APK and start the receiver automatically.
+
+            The APK (`android-receiver-debug.apk`) is bundled inside the `.app` at `Contents/Resources/`; you do not need to install it separately.
