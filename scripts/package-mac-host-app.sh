@@ -62,7 +62,14 @@ else
 fi
 chmod +x "$MACOS_DIR/Android Monitor Host" "$MACOS_DIR/phase0-spike" "$MACOS_DIR/status-panel-server"
 
-cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
+# Version stamping. CI sets ANDROID_MONITOR_VERSION from the git tag (e.g.
+# v0.2.0 → 0.2.0); local runs default to 0.1.0. The auto-updater compares
+# this against the latest release's tag_name to decide whether to prompt.
+RAW_VERSION="${ANDROID_MONITOR_VERSION:-0.1.0}"
+RAW_VERSION="${RAW_VERSION#v}"
+BUILD_VERSION="${ANDROID_MONITOR_BUILD:-1}"
+
+cat > "$CONTENTS_DIR/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -84,9 +91,9 @@ cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.1.0</string>
+    <string>${RAW_VERSION}</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>${BUILD_VERSION}</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
     <key>LSUIElement</key>

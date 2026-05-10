@@ -49,22 +49,35 @@ jobs:
             -Dorg.gradle.java.home="$JAVA_HOME" \
             --no-daemon
 
+      # Resolve the version BEFORE packaging so the Info.plist gets stamped
+      # with the tag version. The auto-updater compares this against the
+      # latest release's tag_name to decide whether to prompt.
+      - name: Resolve artifact name and version
+        id: meta
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            NAME="${GITHUB_REF_NAME}"
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            NAME="${GITHUB_SHA:0:7}"
+            VERSION="0.0.0-${NAME}"  # untagged dev build
+          fi
+          echo "name=${NAME}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
       - name: Package macOS app with bundled Android APK
+        env:
+          ANDROID_MONITOR_VERSION: ${{ steps.meta.outputs.version }}
+          ANDROID_MONITOR_BUILD: ${{ github.run_number }}
         run: |
           ./scripts/package-mac-host-app.sh
           test -s "MacHost/build/Android Monitor Host.app/Contents/Resources/android-receiver-debug.apk"
           test -x "MacHost/build/Android Monitor Host.app/Contents/MacOS/Android Monitor Host"
           test -x "MacHost/build/Android Monitor Host.app/Contents/MacOS/phase0-spike"
           test -x "MacHost/build/Android Monitor Host.app/Contents/MacOS/status-panel-server"
-
-      - name: Resolve artifact name
-        id: meta
-        run: |
-          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
-            echo "name=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
-          else
-            echo "name=${GITHUB_SHA:0:7}" >> "$GITHUB_OUTPUT"
-          fi
+          # Sanity-check the stamped version landed in Info.plist.
+          /usr/bin/plutil -extract CFBundleShortVersionString raw \
+            "MacHost/build/Android Monitor Host.app/Contents/Info.plist"
 
       - name: Zip macOS app
         env:

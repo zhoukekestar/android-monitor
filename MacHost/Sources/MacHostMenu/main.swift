@@ -62,6 +62,29 @@ final class MenuHostApp: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        UpdaterService.shared.onStatusMessage = { [weak self] message in
+            guard let self else { return }
+            // Show the updater's status string on the menubar without
+            // clobbering an existing operation message; clear it once the
+            // updater is idle again.
+            if let message {
+                self.operationMessage = message
+            } else if let current = self.operationMessage,
+                      current.contains("更新") || current.contains("下载") || current.contains("解压") || current.contains("替换") {
+                self.operationMessage = nil
+            }
+            self.updateStatusTitle()
+            self.rebuildMenu()
+            self.updateSetupWindow()
+        }
+
+        // Silent background check 4 seconds after launch — long enough for
+        // the device monitor to settle but quick enough that someone re-
+        // opening the app sees the prompt promptly.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+            UpdaterService.shared.checkForUpdates(silent: true)
+        }
+
         deviceMonitor.onUpdate = { [weak self] state in
             guard let self else {
                 return
@@ -141,6 +164,14 @@ final class MenuHostApp: NSObject, NSApplicationDelegate {
         let settingsItem = menuItem("Settings...", #selector(openSettings))
         settingsItem.isEnabled = streamProcess?.isRunning != true
         menu.addItem(settingsItem)
+
+        let updateTitle: String = {
+            if let v = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String {
+                return "Check for Updates… (v\(v))"
+            }
+            return "Check for Updates…"
+        }()
+        menu.addItem(menuItem(updateTitle, #selector(checkForUpdatesFromMenu)))
 
         let screenCaptureItem = menuItem("Request Screen Recording Permission", #selector(requestScreenCapturePermissionFromMenu))
         screenCaptureItem.state = screenCapturePermissionGranted == true ? .on : .off
@@ -322,6 +353,11 @@ final class MenuHostApp: NSObject, NSApplicationDelegate {
         settingsWindowController = controller
         controller.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    @objc private func checkForUpdatesFromMenu() {
+        // Manual check — surface "up-to-date" / errors to the user.
+        UpdaterService.shared.checkForUpdates(silent: false)
     }
 
     private var launchAtLoginEnabled: Bool {
