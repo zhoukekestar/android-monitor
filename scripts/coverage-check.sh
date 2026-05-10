@@ -80,6 +80,9 @@ scripts/test-replace-receiver-helper.sh
 echo "==> Shell signature audit helper tests"
 scripts/test-audit-receiver-signature.sh
 
+echo "==> Shell script entrypoint tests"
+scripts/test-script-entrypoints.sh
+
 echo "==> Android Studio run configuration tests"
 python3 scripts/test-android-studio-run-configs.py
 

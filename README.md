@@ -129,7 +129,14 @@ scripts/device-audit.sh
 如果需要手动安装 Android 客户端：
 
 ```sh
-scripts/install-android-receiver.sh
+scripts/build.sh
+scripts/install.sh
+```
+
+如果确认要替换手机上不同签名的旧客户端：
+
+```sh
+scripts/install.sh --replace
 ```
 
 如果手机提示 `INSTALL_FAILED_USER_RESTRICTED`，说明手机系统禁止 USB
