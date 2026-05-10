@@ -5,6 +5,7 @@ final class SetupWindowController: NSWindowController {
     var onInstall: ((ADBDevice) -> Void)?
     var onStartDisplay: ((ADBDevice) -> Void)?
     var onStartStatus: ((ADBDevice) -> Void)?
+    var onSelectDevice: ((ADBDevice) -> Void)?
     var onOpenSettings: (() -> Void)?
     var onRequestScreenCapture: (() -> Void)?
     var onRestartApp: (() -> Void)?
@@ -92,6 +93,8 @@ final class SetupWindowController: NSWindowController {
 
         installButton.target = self
         installButton.action = #selector(install)
+        devicePopup.target = self
+        devicePopup.action = #selector(selectDevice)
         startDisplayButton.target = self
         startDisplayButton.action = #selector(startDisplay)
         startDisplayButton.bezelStyle = .rounded
@@ -198,10 +201,14 @@ final class SetupWindowController: NSWindowController {
             return "正在检测 Android 设备..."
         case .adbMissing:
             return "没有找到 adb。请安装 Android Studio，或把 Android SDK platform-tools 加到 PATH。"
+        case .adbError(let message):
+            return message
         case .noDevice:
             return "没有检测到手机。请用 USB 连接手机，并打开 USB 调试。"
         case .unauthorized:
             return "手机还没有授权 USB 调试。请解锁手机，并点允许调试。"
+        case .offline:
+            return "手机处于 offline 状态。请重新插拔 USB，解锁手机，必要时运行 adb kill-server / adb start-server 后刷新。"
         case .authorized:
             return "已检测到设备。点击“开始扩展屏”会自动检查并安装手机客户端。"
         }
@@ -211,6 +218,10 @@ final class SetupWindowController: NSWindowController {
         switch deviceState.status {
         case .authorized:
             return "建议先使用 1024x600 @ 30 FPS Low Latency。触摸输入默认关闭，手机画面上长按可切换。"
+        case .adbError:
+            return "ADB 异常通常由 USB 连接、调试授权或 adb server 状态导致。按上方提示处理后点击“刷新设备”。"
+        case .offline:
+            return "offline 通常表示手机 USB 调试会话失效。先解锁手机并重插 USB；如果仍失败，重启 adb server。"
         default:
             return "普通使用流程：双击 Mac app -> 连接并授权手机 -> 选择设备 -> 开始扩展屏。"
         }
@@ -218,6 +229,13 @@ final class SetupWindowController: NSWindowController {
 
     @objc private func refresh() {
         onRefresh?()
+    }
+
+    @objc private func selectDevice() {
+        guard let device = selectedDevice() else {
+            return
+        }
+        onSelectDevice?(device)
     }
 
     @objc private func install() {

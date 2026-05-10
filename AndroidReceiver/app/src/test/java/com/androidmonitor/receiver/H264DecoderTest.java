@@ -15,7 +15,7 @@ public final class H264DecoderTest {
                 nal(1, 0x66)
         );
 
-        H264Decoder.FrameInfo frameInfo = H264Decoder.inspectAnnexB(payload, payload.length);
+        AnnexBInspector.FrameInfo frameInfo = AnnexBInspector.inspect(payload, payload.length);
 
         assertTrue(frameInfo.hasSps);
         assertTrue(frameInfo.hasPps);
@@ -30,7 +30,7 @@ public final class H264DecoderTest {
                 0, 0, 1, 0x65, 0x33
         };
 
-        H264Decoder.FrameInfo frameInfo = H264Decoder.inspectAnnexB(payload, payload.length);
+        AnnexBInspector.FrameInfo frameInfo = AnnexBInspector.inspect(payload, payload.length);
 
         assertTrue(frameInfo.hasSps);
         assertTrue(frameInfo.hasPps);
@@ -41,7 +41,7 @@ public final class H264DecoderTest {
     public void inspectAnnexBDoesNotTreatDeltaFrameAsPrimingFrame() {
         byte[] payload = annexB(nal(1, 0x11, 0x22));
 
-        H264Decoder.FrameInfo frameInfo = H264Decoder.inspectAnnexB(payload, payload.length);
+        AnnexBInspector.FrameInfo frameInfo = AnnexBInspector.inspect(payload, payload.length);
 
         assertFalse(frameInfo.hasSps);
         assertFalse(frameInfo.hasPps);
@@ -52,7 +52,7 @@ public final class H264DecoderTest {
     public void inspectAnnexBTracksPartialConfig() {
         byte[] payload = annexB(nal(7, 0x11), nal(5, 0x22));
 
-        H264Decoder.FrameInfo frameInfo = H264Decoder.inspectAnnexB(payload, payload.length);
+        AnnexBInspector.FrameInfo frameInfo = AnnexBInspector.inspect(payload, payload.length);
 
         assertTrue(frameInfo.hasSps);
         assertFalse(frameInfo.hasPps);
@@ -68,10 +68,35 @@ public final class H264DecoderTest {
                 0, 0, 0, 1, 0x65
         };
 
-        H264Decoder.FrameInfo frameInfo = H264Decoder.inspectAnnexB(payload, payload.length);
+        AnnexBInspector.FrameInfo frameInfo = AnnexBInspector.inspect(payload, payload.length);
 
         assertTrue(frameInfo.hasSps);
         assertTrue(frameInfo.hasPps);
+        assertTrue(frameInfo.hasIdr);
+    }
+
+    @Test
+    public void inspectAnnexBStopsAtTrailingStartCodeWithoutNalHeader() {
+        byte[] payload = new byte[] {0, 0, 1};
+
+        AnnexBInspector.FrameInfo frameInfo = AnnexBInspector.inspect(payload, payload.length);
+
+        assertFalse(frameInfo.hasSps);
+        assertFalse(frameInfo.hasPps);
+        assertFalse(frameInfo.hasIdr);
+    }
+
+    @Test
+    public void inspectAnnexBAdvancesWhenPayloadBeginsWithStartCodePattern() {
+        byte[] payload = new byte[] {
+                0, 0, 1, 0,
+                0, 0, 1, 0x65
+        };
+
+        AnnexBInspector.FrameInfo frameInfo = AnnexBInspector.inspect(payload, payload.length);
+
+        assertFalse(frameInfo.hasSps);
+        assertFalse(frameInfo.hasPps);
         assertTrue(frameInfo.hasIdr);
     }
 

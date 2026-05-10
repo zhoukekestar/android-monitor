@@ -18,9 +18,17 @@ let package = Package(
         .executable(
             name: "status-panel-server",
             targets: ["MacStatusPanel"]
+        ),
+        .library(
+            name: "MacHostMenuCore",
+            targets: ["MacHostMenuCore"]
         )
     ],
     targets: [
+        .target(
+            name: "MacHostMenuCore",
+            path: "Sources/MacHostMenuCore"
+        ),
         .executableTarget(
             name: "MacHost",
             path: "Sources/MacHost",
@@ -44,6 +52,7 @@ let package = Package(
         ),
         .executableTarget(
             name: "MacHostMenu",
+            dependencies: ["MacHostMenuCore"],
             path: "Sources/MacHostMenu",
             linkerSettings: [
                 .linkedFramework("ApplicationServices"),
@@ -57,6 +66,11 @@ let package = Package(
             linkerSettings: [
                 .linkedFramework("Network")
             ]
+        ),
+        .testTarget(
+            name: "MacHostMenuCoreTests",
+            dependencies: ["MacHostMenuCore"],
+            path: "Tests/MacHostMenuCoreTests"
         )
     ]
 )

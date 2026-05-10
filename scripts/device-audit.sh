@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+. "$ROOT_DIR/scripts/lib/adb-path.sh"
+
 PACKAGE_NAME="com.androidmonitor.receiver"
 PORT="${PHASE0_STREAM_PORT:-38888}"
 CHECK_REVERSE_LIST=0
@@ -46,21 +49,17 @@ while [[ $# -gt 0 ]]; do
     shift
 done
 
-if ! command -v adb >/dev/null 2>&1; then
-    echo "[FAIL] adb was not found on PATH" >&2
+ADB_BIN="$(resolve_adb_bin)"
+if [[ -z "$ADB_BIN" ]]; then
+    echo "[FAIL] adb was not found from ANDROID_HOME, ANDROID_SDK_ROOT, ~/Library/Android/sdk, or PATH." >&2
     exit 1
 fi
 
 echo "==> ADB devices"
-ADB_DEVICES="$(adb devices)"
-printf '%s\n' "$ADB_DEVICES"
-if ! printf '%s\n' "$ADB_DEVICES" | awk 'NR > 1 && $2 == "device" { found = 1 } END { exit found ? 0 : 1 }'; then
-    echo "[FAIL] No authorized adb device found." >&2
-    exit 3
-fi
+require_single_authorized_adb_device "$ADB_BIN"
 
 adb_shell() {
-    adb shell "$@" 2>/dev/null | tr -d '\r'
+    "$ADB_BIN" shell "$@" 2>/dev/null | tr -d '\r'
 }
 
 prop() {
@@ -100,7 +99,7 @@ if [[ "$CHECK_REVERSE_LIST" -ne 1 ]]; then
     echo "[INFO] tcp:$PORT reverse state is unknown"
 else
     set +e
-    REVERSE_LIST="$(adb reverse --list 2>&1 | tr -d '\r')"
+    REVERSE_LIST="$("$ADB_BIN" reverse --list 2>&1 | tr -d '\r')"
     REVERSE_LIST_STATUS=$?
     set -e
     if [[ "$REVERSE_LIST_STATUS" -ne 0 ]]; then

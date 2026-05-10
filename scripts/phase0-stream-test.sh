@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MAC_DIR="$ROOT_DIR/MacHost"
+. "$ROOT_DIR/scripts/lib/adb-path.sh"
 PACKAGE_NAME="com.androidmonitor.receiver"
 ACTIVITY_NAME="com.androidmonitor.receiver/.MainActivity"
 
@@ -177,6 +178,19 @@ if ! awk -v value="$PRE_CAPTURE_DELAY" 'BEGIN { exit(value ~ /^[0-9]+([.][0-9]+)
     exit 2
 fi
 
+if command -v lsof >/dev/null 2>&1; then
+    PORT_LISTENERS="$(lsof -nP -iTCP:"$PORT" -sTCP:LISTEN 2>/dev/null || true)"
+    if [[ -n "$PORT_LISTENERS" ]]; then
+        cat >&2 <<EOF
+[FAIL] Mac TCP port $PORT is already in use, so the stream server cannot start.
+       Stop the existing Android Monitor stream or quit Android Monitor Host, then rerun.
+
+$PORT_LISTENERS
+EOF
+        exit 8
+    fi
+fi
+
 if [[ "$REQUIRE_REAL_CAPTURE" -eq 1 && "$SYNTHETIC_ONLY" -ne 1 && "$ALLOW_STALE_VIRTUAL_DISPLAYS" -ne 1 ]]; then
     STALE_VIRTUAL_DISPLAY_COUNT="$("$ROOT_DIR/scripts/display-audit.sh" --count)"
     if [[ "$STALE_VIRTUAL_DISPLAY_COUNT" -gt 0 ]]; then
@@ -189,21 +203,17 @@ EOF
     fi
 fi
 
-if ! command -v adb >/dev/null 2>&1; then
-    echo "[FAIL] adb was not found on PATH" >&2
+ADB_BIN="$(resolve_adb_bin)"
+if [[ -z "$ADB_BIN" ]]; then
+    echo "[FAIL] adb was not found from ANDROID_HOME, ANDROID_SDK_ROOT, ~/Library/Android/sdk, or PATH." >&2
     exit 1
 fi
 
 echo "==> Checking authorized Android device"
-ADB_DEVICES="$(adb devices)"
-printf '%s\n' "$ADB_DEVICES"
-if ! printf '%s\n' "$ADB_DEVICES" | awk 'NR > 1 && $2 == "device" { found = 1 } END { exit found ? 0 : 1 }'; then
-    echo "[FAIL] No authorized adb device found." >&2
-    exit 3
-fi
+require_single_authorized_adb_device "$ADB_BIN"
 
 echo "==> Verifying AndroidReceiver is installed"
-INSTALLED_PACKAGES="$(adb shell pm list packages "$PACKAGE_NAME" | tr -d '\r')"
+INSTALLED_PACKAGES="$("$ADB_BIN" shell pm list packages "$PACKAGE_NAME" | tr -d '\r')"
 if ! printf '%s\n' "$INSTALLED_PACKAGES" | grep -q "^package:$PACKAGE_NAME$"; then
     cat >&2 <<EOF
 [FAIL] $PACKAGE_NAME is not installed.
@@ -229,22 +239,22 @@ cleanup() {
 trap cleanup EXIT
 
 echo "==> Configuring adb reverse"
-adb reverse --remove "tcp:$PORT" >/dev/null 2>&1 || true
-adb reverse "tcp:$PORT" "tcp:$PORT"
+"$ADB_BIN" reverse --remove "tcp:$PORT" >/dev/null 2>&1 || true
+"$ADB_BIN" reverse "tcp:$PORT" "tcp:$PORT"
 {
     echo "[OK] adb reverse command accepted: tcp:$PORT -> tcp:$PORT"
     echo "[INFO] Skipped adb reverse --list because some Android 5 adbd builds disconnect after that diagnostic call."
 } | tee "$OUTPUT_DIR/adb-reverse.txt"
 
 echo "==> Capturing Android logs"
-adb logcat -c || true
-adb logcat -v time AndroidMonitorStream:V AndroidMonitorDecoder:V '*:S' >"$ANDROID_LOG" 2>&1 &
+"$ADB_BIN" logcat -c || true
+"$ADB_BIN" logcat -v time AndroidMonitorStream:V AndroidMonitorDecoder:V '*:S' >"$ANDROID_LOG" 2>&1 &
 LOGCAT_PID=$!
 
 echo "==> Launching AndroidReceiver"
-adb shell am force-stop "$PACKAGE_NAME" >/dev/null 2>&1 || true
+"$ADB_BIN" shell am force-stop "$PACKAGE_NAME" >/dev/null 2>&1 || true
 sleep 0.5
-adb shell am start -n "$ACTIVITY_NAME" | tr -d '\r'
+"$ADB_BIN" shell am start -n "$ACTIVITY_NAME" | tr -d '\r'
 sleep 1
 
 echo "==> Running Mac stream"

@@ -31,14 +31,144 @@ def adbExecutable = {
     return new File(androidSdkDir(), "platform-tools/${executableName}")
 }
 
-tasks.register("installReceiverDebug", Exec) {
+def adbDeviceRows = { String output ->
+    return output
+            .readLines()
+            .collect { it.trim() }
+            .findAll { it && !it.startsWith("List of devices") }
+            .collect { line ->
+                def parts = line.tokenize()
+                [
+                        serial: parts ? parts[0] : line,
+                        status: parts.size() >= 2 ? parts[1] : "unknown",
+                        raw   : line
+                ]
+            }
+}
+
+def formatAdbRows = { rows ->
+    if (rows.isEmpty()) {
+        return "(none)"
+    }
+    return rows.collect { "  - ${it.raw}" }.join("\n")
+}
+
+tasks.register("installReceiverDebug") {
     group = "android monitor"
     description = "Builds AndroidReceiver and installs it with classic adb install for Android 5/MIUI devices."
-    dependsOn(":android-receiver:assembleDebug")
+    dependsOn(":android-receiver:assembleDebug", "checkAdbDevice")
 
     def apkPath = layout.projectDirectory.file("AndroidReceiver/app/build/outputs/apk/debug/android-receiver-debug.apk")
-    executable = adbExecutable().absolutePath
-    args("install", "-r", "-d", apkPath.asFile.absolutePath)
+
+    doFirst {
+        if (!adbExecutable().exists()) {
+            throw new GradleException("adb was not found at ${adbExecutable().absolutePath}. Install Android SDK Platform-Tools in Android Studio.")
+        }
+    }
+
+    doLast {
+        def output = new ByteArrayOutputStream()
+        def result = exec {
+            executable = adbExecutable().absolutePath
+            args("install", "-r", "-d", apkPath.asFile.absolutePath)
+            standardOutput = output
+            errorOutput = output
+            ignoreExitValue = true
+        }
+
+        def text = output.toString("UTF-8")
+        print(text)
+
+        if (result.exitValue != 0 || text.contains("Failure [") || text.contains("Exception occurred while executing")) {
+            def guidance = "adb install failed."
+            if (text.contains("INSTALL_FAILED_USER_RESTRICTED")) {
+                guidance = "Android blocked USB installation: INSTALL_FAILED_USER_RESTRICTED. Enable Developer Options > Install via USB and USB debugging security settings if present. If the phone still blocks USB install, run scripts/stage-apk.sh and install AndroidMonitorReceiver-debug.apk from the phone's Downloads app."
+            } else if (text.contains("INSTALL_PARSE_FAILED_INCONSISTENT_CERTIFICATES")) {
+                guidance = "The phone already has com.androidmonitor.receiver installed with a different signing certificate. To keep using the existing app, run the 'Launch Installed Android Receiver' configuration. To install this build, run 'Uninstall Android Receiver' first, then rerun 'Run Android Receiver'."
+            } else if (text.contains("INSTALL_FAILED_VERSION_DOWNGRADE")) {
+                guidance = "The phone already has a newer Android Monitor build installed. To install this build, run 'Uninstall Android Receiver' first, then rerun 'Run Android Receiver'."
+            }
+            throw new GradleException("${guidance}\n\nadb output:\n${text}")
+        }
+    }
+}
+
+tasks.register("checkAdbDevice") {
+    group = "android monitor"
+    description = "Checks that exactly one authorized Android device is available for direct Gradle install."
+
+    doLast {
+        if (!adbExecutable().exists()) {
+            throw new GradleException("adb was not found at ${adbExecutable().absolutePath}. Install Android SDK Platform-Tools in Android Studio.")
+        }
+
+        def output = new ByteArrayOutputStream()
+        def result = exec {
+            executable = adbExecutable().absolutePath
+            args("devices", "-l")
+            standardOutput = output
+            errorOutput = output
+            ignoreExitValue = true
+        }
+        if (result.exitValue != 0) {
+            throw new GradleException("adb failed while listing devices:\n${output.toString('UTF-8')}")
+        }
+
+        def rows = adbDeviceRows(output.toString("UTF-8"))
+        def authorized = rows.findAll { it.status == "device" }
+        def unauthorized = rows.findAll { it.status == "unauthorized" }
+        def offline = rows.findAll { it.status == "offline" }
+        def selectedSerial = System.getenv("ANDROID_SERIAL")
+
+        if (selectedSerial) {
+            def selected = rows.find { it.serial == selectedSerial }
+            if (selected == null) {
+                throw new GradleException(
+                        "ANDROID_SERIAL=${selectedSerial} was set, but that device is not visible to adb.\n" +
+                                "Visible devices:\n${formatAdbRows(rows)}\n" +
+                                "Run the 'Diagnose ADB USB' configuration in Android Studio, or run './gradlew diagnoseAdbUsb --console=plain'."
+                )
+            }
+            if (selected.status != "device") {
+                throw new GradleException(
+                        "ANDROID_SERIAL=${selectedSerial} is visible, but its adb state is '${selected.status}'.\n" +
+                                "Unlock the phone and approve USB debugging if needed.\n" +
+                                "Visible devices:\n${formatAdbRows(rows)}\n" +
+                                "Run the 'Diagnose ADB USB' configuration in Android Studio, or run './gradlew diagnoseAdbUsb --console=plain'."
+                )
+            }
+            return
+        }
+
+        if (authorized.isEmpty()) {
+            if (!unauthorized.isEmpty()) {
+                throw new GradleException(
+                        "No authorized Android device found. Unlock the phone and approve the USB debugging prompt, then rerun.\n" +
+                                "Visible devices:\n${formatAdbRows(rows)}\n" +
+                                "Run the 'Diagnose ADB USB' configuration in Android Studio, or run './gradlew diagnoseAdbUsb --console=plain'."
+                )
+            }
+            if (!offline.isEmpty()) {
+                throw new GradleException(
+                        "Android device is offline. Reconnect USB, then run 'adb kill-server' and 'adb start-server' if it stays offline.\n" +
+                                "Visible devices:\n${formatAdbRows(rows)}\n" +
+                                "Run the 'Diagnose ADB USB' configuration in Android Studio, or run './gradlew diagnoseAdbUsb --console=plain'."
+                )
+            }
+            throw new GradleException(
+                    "No Android device found. Connect the phone over USB, enable Developer Options > USB debugging, then rerun.\n" +
+                            "Visible devices:\n${formatAdbRows(rows)}\n" +
+                            "Run the 'Diagnose ADB USB' configuration in Android Studio, or run './gradlew diagnoseAdbUsb --console=plain'."
+            )
+        }
+
+        if (authorized.size() > 1) {
+            throw new GradleException(
+                    "Multiple Android devices are connected. Set ANDROID_SERIAL=<serial> for this Gradle task, or use the Mac menu app device picker.\n" +
+                            "Authorized devices:\n${formatAdbRows(authorized)}"
+            )
+        }
+    }
 }
 
 tasks.register("runReceiverDebug", Exec) {
@@ -48,4 +178,137 @@ tasks.register("runReceiverDebug", Exec) {
 
     executable = adbExecutable().absolutePath
     args("shell", "monkey", "-p", "com.androidmonitor.receiver", "1")
+}
+
+tasks.register("stageReceiverDebug", Exec) {
+    group = "android monitor"
+    description = "Builds the APK and copies it to the phone Downloads folder for manual installation."
+    dependsOn(":android-receiver:assembleDebug", "checkAdbDevice")
+
+    executable = "bash"
+    args("scripts/stage-apk.sh")
+}
+
+tasks.register("uninstallReceiverDebug") {
+    group = "android monitor"
+    description = "Uninstalls AndroidReceiver from the connected device so a differently signed build can be installed."
+    dependsOn("checkAdbDevice")
+
+    doLast {
+        def output = new ByteArrayOutputStream()
+        def result = exec {
+            executable = adbExecutable().absolutePath
+            args("uninstall", "com.androidmonitor.receiver")
+            standardOutput = output
+            errorOutput = output
+            ignoreExitValue = true
+        }
+
+        def text = output.toString("UTF-8")
+        print(text)
+        if (result.exitValue != 0 && !text.contains("Unknown package")) {
+            throw new GradleException("Failed to uninstall AndroidReceiver.\n\nadb output:\n${text}")
+        }
+    }
+}
+
+tasks.register("replaceReceiverDebugDryRun", Exec) {
+    group = "android monitor"
+    description = "Prints the receiver replacement commands without uninstalling anything."
+
+    executable = "bash"
+    args("scripts/replace-android-receiver.sh", "--confirm-uninstall", "--dry-run")
+}
+
+tasks.register("replaceReceiverDebug") {
+    group = "android monitor"
+    description = "Uninstalls the existing AndroidReceiver, installs this build, and runs the device runtime gate. Requires -PconfirmUninstall=true."
+
+    doLast {
+        if (findProperty("confirmUninstall") != "true") {
+            throw new GradleException(
+                    "Refusing to uninstall AndroidReceiver without explicit confirmation.\n" +
+                            "Dry run: ./gradlew replaceReceiverDebugDryRun --console=plain\n" +
+                            "Replace: ./gradlew replaceReceiverDebug -PconfirmUninstall=true --console=plain"
+            )
+        }
+
+        exec {
+            executable = "bash"
+            args("scripts/replace-android-receiver.sh", "--confirm-uninstall")
+        }
+    }
+}
+
+tasks.register("launchReceiverDebug", Exec) {
+    group = "android monitor"
+    description = "Launches an already installed AndroidReceiver package on the connected device."
+    dependsOn("checkAdbDevice")
+
+    executable = adbExecutable().absolutePath
+    args("shell", "monkey", "-p", "com.androidmonitor.receiver", "1")
+}
+
+tasks.register("verifyDeviceRuntime", Exec) {
+    group = "android monitor"
+    description = "Runs the phone-connected install and synthetic streaming verification gate."
+
+    executable = "bash"
+    args("scripts/verify-device-runtime.sh")
+}
+
+tasks.register("verifyInstalledDeviceRuntime", Exec) {
+    group = "android monitor"
+    description = "Runs the phone-connected synthetic streaming verification gate using the already installed receiver."
+
+    executable = "bash"
+    args("scripts/verify-device-runtime.sh", "--skip-install")
+}
+
+tasks.register("verifyRealDeviceRuntime", Exec) {
+    group = "android monitor"
+    description = "Runs the phone-connected install and real virtual-display capture gate."
+
+    executable = "bash"
+    args("scripts/verify-device-runtime.sh", "--real-display")
+}
+
+tasks.register("verifyInstalledRealDeviceRuntime", Exec) {
+    group = "android monitor"
+    description = "Runs the phone-connected real virtual-display capture gate using the already installed receiver."
+
+    executable = "bash"
+    args("scripts/verify-device-runtime.sh", "--skip-install", "--real-display")
+}
+
+tasks.register("diagnoseAdbUsb", Exec) {
+    group = "android monitor"
+    description = "Prints ADB and macOS USB diagnostics for a phone that is not installable."
+
+    executable = "bash"
+    args("scripts/adb-usb-diagnose.sh")
+}
+
+tasks.register("auditReceiverSignature", Exec) {
+    group = "android monitor"
+    description = "Compares the current AndroidReceiver APK signing certificate with the installed phone app."
+
+    executable = "bash"
+    args("scripts/audit-receiver-signature.sh")
+}
+
+tasks.register("prepareAndroidStudio", Exec) {
+    group = "android monitor"
+    description = "Writes local Android SDK config for root and AndroidReceiver Android Studio projects."
+
+    executable = "bash"
+    args("scripts/setup-android-env.sh")
+}
+
+tasks.register("doctorAndroidStudio", Exec) {
+    group = "android monitor"
+    description = "Runs read-only Android Studio, Gradle, ADB, signature, and display diagnostics."
+
+    executable = "bash"
+    args("scripts/android-studio-doctor.sh")
 }

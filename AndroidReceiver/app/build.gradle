@@ -1,5 +1,10 @@
 plugins {
     id "com.android.application"
+    id "jacoco"
+}
+
+jacoco {
+    toolVersion = "0.8.13"
 }
 
 android {
@@ -29,4 +34,60 @@ android {
 
 dependencies {
     testImplementation "junit:junit:4.13.2"
+    testImplementation "org.json:json:20240303"
+}
+
+tasks.register("jacocoDebugUnitTestReport", JacocoReport) {
+    dependsOn "testDebugUnitTest"
+
+    reports {
+        xml.required = true
+        html.required = true
+    }
+
+    def debugTree = fileTree(
+            dir: "$buildDir/intermediates/javac/debug/compileDebugJavaWithJavac/classes",
+            includes: [
+                    '**/AnnexBInspector*.class',
+                    '**/StreamProtocol*.class',
+                    '**/StatusSnapshot.class'
+            ]
+    )
+
+    classDirectories.setFrom(files(debugTree))
+    sourceDirectories.setFrom(files("src/main/java"))
+    executionData.setFrom(fileTree(dir: buildDir, includes: [
+            "outputs/unit_test_code_coverage/debugUnitTest/testDebugUnitTest.exec",
+            "jacoco/testDebugUnitTest.exec"
+    ]))
+}
+
+tasks.register("jacocoDebugCoverageVerification", JacocoCoverageVerification) {
+    dependsOn "jacocoDebugUnitTestReport"
+
+    def debugTree = fileTree(
+            dir: "$buildDir/intermediates/javac/debug/compileDebugJavaWithJavac/classes",
+            includes: [
+                    '**/AnnexBInspector*.class',
+                    '**/StreamProtocol*.class',
+                    '**/StatusSnapshot.class'
+            ]
+    )
+
+    classDirectories.setFrom(files(debugTree))
+    sourceDirectories.setFrom(files("src/main/java"))
+    executionData.setFrom(fileTree(dir: buildDir, includes: [
+            "outputs/unit_test_code_coverage/debugUnitTest/testDebugUnitTest.exec",
+            "jacoco/testDebugUnitTest.exec"
+    ]))
+
+    violationRules {
+        rule {
+            limit {
+                counter = "LINE"
+                value = "COVEREDRATIO"
+                minimum = 0.95
+            }
+        }
+    }
 }

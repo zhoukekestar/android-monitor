@@ -59,6 +59,16 @@ esac
 
 CLASSPATH=$APP_HOME/gradle/wrapper/gradle-wrapper.jar
 
+# Prefer Android Studio's bundled JBR on macOS when the inherited JAVA_HOME is
+# stale. This keeps terminal Gradle commands consistent with Android Studio run
+# configurations on machines where Homebrew JDK paths have moved.
+ANDROID_STUDIO_JBR="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
+if [ -n "$JAVA_HOME" ] && [ ! -x "$JAVA_HOME/bin/java" ] && [ -x "$ANDROID_STUDIO_JBR/bin/java" ] ; then
+    warn "[INFO] JAVA_HOME is invalid; using Android Studio JBR: $ANDROID_STUDIO_JBR"
+    JAVA_HOME=$ANDROID_STUDIO_JBR
+    export JAVA_HOME
+fi
+
 # Determine the Java command to use to start the JVM.
 if [ -n "$JAVA_HOME" ] ; then
     if [ -x "$JAVA_HOME/jre/sh/java" ] ; then

@@ -1,9 +1,14 @@
 import AppKit
 import ApplicationServices
 import Foundation
+import MacHostMenuCore
 import ServiceManagement
 
 final class MenuHostApp: NSObject, NSApplicationDelegate {
+    private enum OperationMessages {
+        static let refreshingDevices = "正在刷新设备..."
+    }
+
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private var streamProcess: Process?
     private var statusProcess: Process?
@@ -63,6 +68,9 @@ final class MenuHostApp: NSObject, NSApplicationDelegate {
             }
             self.deviceState = state
             self.ensureSelectedDevice()
+            if self.operationMessage == OperationMessages.refreshingDevices {
+                self.operationMessage = nil
+            }
             if self.restartStreamAfterWake == true,
                state.canStartStream,
                self.streamProcess?.isRunning != true {
@@ -206,7 +214,7 @@ final class MenuHostApp: NSObject, NSApplicationDelegate {
 
     @objc private func refreshDevice() {
         deviceState = ADBDeviceState(status: .unknown)
-        operationMessage = "正在刷新设备..."
+        operationMessage = OperationMessages.refreshingDevices
         updateStatusTitle()
         rebuildMenu()
         updateSetupWindow()
@@ -235,6 +243,12 @@ final class MenuHostApp: NSObject, NSApplicationDelegate {
             controller.onStartStatus = { [weak self] device in
                 self?.selectedDeviceSerial = device.serial
                 self?.startStatusPanelForDevice(device)
+            }
+            controller.onSelectDevice = { [weak self] device in
+                self?.selectedDeviceSerial = device.serial
+                self?.operationMessage = nil
+                self?.rebuildMenu()
+                self?.updateSetupWindow()
             }
             controller.onOpenSettings = { [weak self] in
                 self?.openSettings()
@@ -454,7 +468,7 @@ final class MenuHostApp: NSObject, NSApplicationDelegate {
                     self.deviceMonitor.refresh()
                 } else {
                     self.operationMessage = "安装失败。"
-                    self.showError("安装 Android 客户端失败：\n\(result.output)")
+                    self.showError(ADBClient.userGuidance(for: result, operation: .installReceiver))
                 }
                 self.updateStatusTitle()
                 self.rebuildMenu()
@@ -488,6 +502,13 @@ final class MenuHostApp: NSObject, NSApplicationDelegate {
             return
         }
 
+        let displayAudit = runBackendDisplayAudit()
+        guard displayAudit.succeeded else {
+            operationMessage = "扩展屏启动前检查失败。"
+            showError(ADBClient.userGuidance(for: displayAudit, operation: .displayAudit))
+            return
+        }
+
         selectedDeviceSerial = device.serial
         operationMessage = "正在准备 \(device.summary)：检查客户端、配置 USB 通道..."
         updateStatusTitle()
@@ -513,7 +534,7 @@ final class MenuHostApp: NSObject, NSApplicationDelegate {
                 if !install.succeeded {
                     DispatchQueue.main.async {
                         self.operationMessage = "自动安装失败。"
-                        self.showError("没有检测到手机客户端，自动安装失败：\n\(install.output)")
+                        self.showError(ADBClient.userGuidance(for: install, operation: .installReceiver))
                     }
                     return
                 }
@@ -523,7 +544,7 @@ final class MenuHostApp: NSObject, NSApplicationDelegate {
             if !reverse.succeeded {
                 DispatchQueue.main.async {
                     self.operationMessage = "USB 通道配置失败。"
-                    self.showError("ADB reverse 配置失败：\n\(reverse.output)")
+                    self.showError(ADBClient.userGuidance(for: reverse, operation: .configureReverse))
                 }
                 return
             }
@@ -533,7 +554,7 @@ final class MenuHostApp: NSObject, NSApplicationDelegate {
             if !launch.succeeded {
                 DispatchQueue.main.async {
                     self.operationMessage = "手机客户端启动失败。"
-                    self.showError("启动 Android Monitor 失败：\n\(launch.output)")
+                    self.showError(ADBClient.userGuidance(for: launch, operation: .launchReceiver))
                 }
                 return
             }
@@ -580,29 +601,75 @@ final class MenuHostApp: NSObject, NSApplicationDelegate {
         process.standardError = logFile
         process.terminationHandler = { [weak self] finishedProcess in
             DispatchQueue.main.async {
-                self?.streamProcess = nil
-                try? self?.logFile?.close()
-                self?.logFile = nil
-                self?.updateStatusTitle()
-                self?.rebuildMenu()
-                self?.updateSetupWindow()
+                guard let self else {
+                    return
+                }
+                let wasActiveProcess = self.streamProcess === finishedProcess
+                self.streamProcess = nil
+                try? self.logFile?.close()
+                self.logFile = nil
+                self.updateStatusTitle()
+                self.rebuildMenu()
+                self.updateSetupWindow()
+
+                guard wasActiveProcess, finishedProcess.terminationStatus != 0 else {
+                    return
+                }
+
+                self.operationMessage = "扩展屏已停止：后端异常退出。"
+                self.showError(
+                    "扩展屏后端异常退出，退出码 \(finishedProcess.terminationStatus)。\n\n"
+                    + "请按以下顺序处理：\n"
+                    + "1. 确认系统设置已允许屏幕录制。\n"
+                    + "2. 如果提示残留虚拟显示器，请注销或重启 macOS 后重试。\n"
+                    + "3. 确认手机端 Android Monitor 已打开并保持 USB 连接。\n\n"
+                    + "最近日志：\n"
+                    + self.logTail(from: self.logURL)
+                )
             }
         }
 
         do {
             try process.run()
             streamProcess = process
-            operationMessage = "扩展屏已启动。手机会自动连接到 Mac。"
+            operationMessage = "扩展屏正在启动。手机会自动连接到 Mac。"
             updateStatusTitle()
             rebuildMenu()
             updateSetupWindow()
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self, weak process] in
+                guard let self, let process, self.streamProcess === process else {
+                    return
+                }
+                if process.isRunning {
+                    self.operationMessage = "扩展屏已启动。手机会自动连接到 Mac。"
+                    self.updateStatusTitle()
+                    self.rebuildMenu()
+                    self.updateSetupWindow()
+                    return
+                }
+
+                self.streamProcess = nil
+                try? self.logFile?.close()
+                self.logFile = nil
+                self.operationMessage = "扩展屏启动失败。"
+                self.statusItem.button?.title = "AM: Start Failed"
+                self.showError(
+                    "扩展屏后端启动后立即退出。\n\n"
+                    + "请按以下顺序处理：\n"
+                    + "1. 确认系统设置已允许屏幕录制。\n"
+                    + "2. 如果提示残留虚拟显示器，请注销或重启 macOS 后重试。\n"
+                    + "3. 确认手机端 Android Monitor 已打开并保持 USB 连接。\n\n"
+                    + "最近日志：\n"
+                    + self.logTail(from: self.logURL)
+                )
+            }
         } catch {
             try? logFile.close()
             self.logFile = nil
             operationMessage = "扩展屏启动失败。"
             statusItem.button?.title = "AM: Start Failed"
-            rebuildMenu()
-            updateSetupWindow()
+            showError("无法启动扩展屏后端：\n\(error.localizedDescription)")
         }
     }
 
@@ -623,7 +690,7 @@ final class MenuHostApp: NSObject, NSApplicationDelegate {
         selectedDeviceSerial = device.serial
         let reverse = ADBClient.configureReverse(port: 38889, on: device)
         if !reverse.succeeded {
-            showError("Status Panel USB 通道配置失败：\n\(reverse.output)")
+            showError(ADBClient.userGuidance(for: reverse, operation: .configureReverse))
             return
         }
         ADBClient.forceStopReceiver(on: device)
@@ -708,11 +775,10 @@ final class MenuHostApp: NSObject, NSApplicationDelegate {
 
     private func ensureSelectedDevice() {
         let authorized = deviceState.authorizedDevices
-        if let selectedDeviceSerial,
-           authorized.contains(where: { $0.serial == selectedDeviceSerial }) {
-            return
-        }
-        selectedDeviceSerial = authorized.first?.serial
+        selectedDeviceSerial = MenuDeviceSelection.resolvedSerial(
+            selectedSerial: selectedDeviceSerial,
+            authorizedSerials: authorized.map(\.serial)
+        )
     }
 
     private func selectedAuthorizedDevice() -> ADBDevice? {
@@ -793,6 +859,43 @@ final class MenuHostApp: NSObject, NSApplicationDelegate {
         let stdout = String(data: outputPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
         let stderr = String(data: errorPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
         return CommandResult(exitCode: process.terminationStatus, output: stdout + stderr)
+    }
+
+    private func runBackendDisplayAudit() -> CommandResult {
+        let process = Process()
+        if let bundledBackendURL {
+            process.executableURL = bundledBackendURL
+            process.arguments = ["--audit-displays", "--fail-on-stale-displays"]
+        } else {
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+            process.currentDirectoryURL = packageRoot
+            process.arguments = ["swift", "run", "phase0-spike", "--audit-displays", "--fail-on-stale-displays"]
+        }
+
+        let outputPipe = Pipe()
+        let errorPipe = Pipe()
+        process.standardOutput = outputPipe
+        process.standardError = errorPipe
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {
+            return CommandResult(exitCode: -1, output: error.localizedDescription)
+        }
+
+        let stdout = String(data: outputPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        let stderr = String(data: errorPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        return CommandResult(exitCode: process.terminationStatus, output: stdout + stderr)
+    }
+
+    private func logTail(from url: URL, maxLines: Int = 80) -> String {
+        guard let data = try? Data(contentsOf: url),
+              let text = String(data: data, encoding: .utf8) else {
+            return "没有可读取的日志。"
+        }
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
+        return lines.suffix(maxLines).joined(separator: "\n")
     }
 
     @objc private func revealLog() {

@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+. "$ROOT_DIR/scripts/lib/adb-path.sh"
 APK_PATH="$ROOT_DIR/AndroidReceiver/app/build/outputs/apk/debug/android-receiver-debug.apk"
 DEST="/sdcard/Download/AndroidMonitorReceiver-debug.apk"
 
@@ -47,21 +48,17 @@ if [[ ! -s "$APK_PATH" ]]; then
     exit 1
 fi
 
-if ! command -v adb >/dev/null 2>&1; then
-    echo "[FAIL] adb was not found on PATH" >&2
+ADB_BIN="$(resolve_adb_bin)"
+if [[ -z "$ADB_BIN" ]]; then
+    echo "[FAIL] adb was not found from ANDROID_HOME, ANDROID_SDK_ROOT, ~/Library/Android/sdk, or PATH." >&2
     exit 1
 fi
 
 echo "==> Checking authorized Android device"
-ADB_DEVICES="$(adb devices)"
-printf '%s\n' "$ADB_DEVICES"
-if ! printf '%s\n' "$ADB_DEVICES" | awk 'NR > 1 && $2 == "device" { found = 1 } END { exit found ? 0 : 1 }'; then
-    echo "[FAIL] No authorized adb device found." >&2
-    exit 3
-fi
+require_single_authorized_adb_device "$ADB_BIN"
 
 echo "==> Copying APK to $DEST"
-adb push "$APK_PATH" "$DEST"
+"$ADB_BIN" push "$APK_PATH" "$DEST"
 
 cat <<EOF
 [OK] APK staged for manual install:

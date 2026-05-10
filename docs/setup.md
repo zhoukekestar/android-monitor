@@ -105,6 +105,13 @@ capture testing is blocked by stale virtual-display state.
 
 ## Android Receiver
 
+Initialize local Android SDK paths before building from a fresh checkout or
+after moving the repository:
+
+```sh
+scripts/setup-android-env.sh
+```
+
 Build with any installed Gradle, or reuse the reference Gradle wrapper:
 
 ```sh

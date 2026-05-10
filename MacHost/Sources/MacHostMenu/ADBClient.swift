@@ -1,9 +1,11 @@
 import Foundation
+import MacHostMenuCore
 
 struct ADBDevice: Equatable {
     enum ConnectionStatus: Equatable {
         case device
         case unauthorized
+        case offline
         case other(String)
     }
 
@@ -20,8 +22,10 @@ struct ADBDeviceState {
     enum Status {
         case unknown
         case adbMissing
+        case adbError(String)
         case noDevice
         case unauthorized
+        case offline
         case authorized
     }
 
@@ -49,10 +53,14 @@ struct ADBDeviceState {
             return "Device: Checking..."
         case .adbMissing:
             return "Device: adb not found"
+        case .adbError:
+            return "Device: adb error"
         case .noDevice:
             return "Device: Not connected"
         case .unauthorized:
             return "Device: Unauthorized"
+        case .offline:
+            return "Device: Offline"
         case .authorized:
             if authorizedDevices.count == 1, let device = authorizedDevices.first {
                 return "Device: \(device.summary)"
@@ -67,10 +75,14 @@ struct ADBDeviceState {
             return "Checking"
         case .adbMissing:
             return "No adb"
+        case .adbError:
+            return "ADB Error"
         case .noDevice:
             return "No Device"
         case .unauthorized:
             return "Unauthorized"
+        case .offline:
+            return "Offline"
         case .authorized:
             return "Ready"
         }
@@ -87,6 +99,13 @@ struct CommandResult {
 }
 
 enum ADBClient {
+    enum Operation {
+        case installReceiver
+        case configureReverse
+        case launchReceiver
+        case displayAudit
+    }
+
     static let receiverPackage = "com.androidmonitor.receiver"
     static let receiverActivity = "com.androidmonitor.receiver/.MainActivity"
 
@@ -97,10 +116,15 @@ enum ADBClient {
 
         let result = run(adbPath, arguments: ["devices", "-l"])
         guard result.succeeded else {
-            return ADBDeviceState(status: .noDevice, adbPath: adbPath)
+            let message = ADBFailureGuidance.message(
+                exitCode: result.exitCode,
+                output: result.output,
+                operation: .configureReverse
+            )
+            return ADBDeviceState(status: .adbError(message), adbPath: adbPath)
         }
 
-        let devices = parseDevices(result.output)
+        let devices = ADBDeviceListParser.parse(result.output).map(ADBDevice.init(parsed:))
         if devices.contains(where: \.isAuthorized) {
             return ADBDeviceState(status: .authorized, devices: devices, adbPath: adbPath)
         }
@@ -111,6 +135,14 @@ enum ADBClient {
             return false
         }) {
             return ADBDeviceState(status: .unauthorized, devices: devices, adbPath: adbPath)
+        }
+        if devices.contains(where: {
+            if case .offline = $0.status {
+                return true
+            }
+            return false
+        }) {
+            return ADBDeviceState(status: .offline, devices: devices, adbPath: adbPath)
         }
         return ADBDeviceState(status: .noDevice, devices: devices, adbPath: adbPath)
     }
@@ -158,6 +190,26 @@ enum ADBClient {
         _ = run(adbPath, arguments: ["-s", device.serial, "shell", "am", "force-stop", receiverPackage])
     }
 
+    static func userGuidance(for result: CommandResult, operation: Operation) -> String {
+        let coreOperation: ADBFailureOperation
+        switch operation {
+        case .installReceiver:
+            coreOperation = .installReceiver
+        case .configureReverse:
+            coreOperation = .configureReverse
+        case .launchReceiver:
+            coreOperation = .launchReceiver
+        case .displayAudit:
+            coreOperation = .displayAudit
+        }
+        return ADBFailureGuidance.message(
+            exitCode: result.exitCode,
+            output: result.output,
+            operation: coreOperation
+        )
+    }
+
+
     static func findADB() -> String? {
         var candidates: [String] = []
         let environment = ProcessInfo.processInfo.environment
@@ -181,7 +233,7 @@ enum ADBClient {
         return candidates.first(where: { fileManager.isExecutableFile(atPath: $0) })
     }
 
-    static func run(_ executable: String, arguments: [String]) -> CommandResult {
+    static func run(_ executable: String, arguments: [String], timeoutSeconds: TimeInterval = 8) -> CommandResult {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
@@ -193,7 +245,29 @@ enum ADBClient {
 
         do {
             try process.run()
-            process.waitUntilExit()
+            let deadline = Date().addingTimeInterval(timeoutSeconds)
+            while process.isRunning && Date() < deadline {
+                Thread.sleep(forTimeInterval: 0.05)
+            }
+            if process.isRunning {
+                terminateTimedOutProcess(process)
+                let partialOutput: String
+                if process.isRunning {
+                    partialOutput = ""
+                } else {
+                    let stdout = String(data: outputPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+                    let stderr = String(data: errorPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+                    partialOutput = stdout + stderr
+                }
+                let partialSuffix = partialOutput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    ? ""
+                    : "\n\nPartial output:\n\(partialOutput.trimmingCharacters(in: .whitespacesAndNewlines))"
+                return CommandResult(
+                    exitCode: -2,
+                    output: "Command timed out after \(Int(timeoutSeconds))s: \(executable) \(arguments.joined(separator: " "))"
+                        + partialSuffix
+                )
+            }
         } catch {
             return CommandResult(exitCode: -1, output: error.localizedDescription)
         }
@@ -203,43 +277,52 @@ enum ADBClient {
         return CommandResult(exitCode: process.terminationStatus, output: stdout + stderr)
     }
 
-    private static func parseDevices(_ output: String) -> [ADBDevice] {
-        output.split(separator: "\n").compactMap { rawLine in
-            let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !line.isEmpty, !line.hasPrefix("List of devices") else {
-                return nil
-            }
-
-            let fields = line.split(whereSeparator: { $0 == " " || $0 == "\t" }).map(String.init)
-            guard fields.count >= 2 else {
-                return nil
-            }
-
-            let serial = fields[0]
-            let status: ADBDevice.ConnectionStatus
-            switch fields[1] {
-            case "device":
-                status = .device
-            case "unauthorized":
-                status = .unauthorized
-            default:
-                status = .other(fields[1])
-            }
-
-            return ADBDevice(
-                serial: serial,
-                summary: deviceSummary(from: fields),
-                status: status
-            )
+    private static func terminateTimedOutProcess(_ process: Process) {
+        process.terminate()
+        waitBrieflyForExit(process, timeoutSeconds: 0.4)
+        guard process.isRunning else {
+            return
         }
+
+        process.interrupt()
+        waitBrieflyForExit(process, timeoutSeconds: 0.2)
+        guard process.isRunning else {
+            return
+        }
+
+        let kill = Process()
+        kill.executableURL = URL(fileURLWithPath: "/bin/kill")
+        kill.arguments = ["-KILL", "\(process.processIdentifier)"]
+        try? kill.run()
+        kill.waitUntilExit()
+        waitBrieflyForExit(process, timeoutSeconds: 0.4)
     }
 
-    private static func deviceSummary(from fields: [String]) -> String {
-        let serial = fields.first ?? "device"
-        let model = fields
-            .first(where: { $0.hasPrefix("model:") })?
-            .replacingOccurrences(of: "model:", with: "")
-            .replacingOccurrences(of: "_", with: " ")
-        return model.map { "\($0) (\(serial))" } ?? serial
+    private static func waitBrieflyForExit(_ process: Process, timeoutSeconds: TimeInterval) {
+        let deadline = Date().addingTimeInterval(timeoutSeconds)
+        while process.isRunning && Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.02)
+        }
+        if !process.isRunning {
+            process.waitUntilExit()
+        }
+    }
+}
+
+private extension ADBDevice {
+    init(parsed: ParsedADBDevice) {
+        let status: ConnectionStatus
+        switch parsed.status {
+        case .device:
+            status = .device
+        case .unauthorized:
+            status = .unauthorized
+        case .offline:
+            status = .offline
+        case .other(let raw):
+            status = .other(raw)
+        }
+
+        self.init(serial: parsed.serial, summary: parsed.summary, status: status)
     }
 }

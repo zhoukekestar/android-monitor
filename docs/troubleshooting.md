@@ -1,5 +1,71 @@
 # Troubleshooting
 
+## Android Studio Build Or Run Does Nothing
+
+Open the repository root in Android Studio:
+
+```text
+/Users/zkk/workspace/android-monitor
+```
+
+Before opening Android Studio, or after moving the repo, initialize local SDK
+paths:
+
+```sh
+scripts/setup-android-env.sh
+```
+
+The project includes shared run configurations:
+
+- `Android Studio Doctor`: runs read-only environment, Gradle, ADB, signature, and display diagnostics.
+- `Prepare Android Studio`: rewrites local SDK config for both Gradle entry points.
+- `Build Android Receiver`: builds the APK with `:android-receiver:assembleDebug`.
+- `Run Android Receiver`: builds, installs, and launches the phone app through ADB.
+- `Stage Android Receiver APK`: copies the built APK to the phone Downloads folder for manual install.
+- `Launch Installed Android Receiver`: launches the already installed phone app without running `adb install`.
+- `Uninstall Android Receiver`: removes the installed phone app before reinstalling a differently signed build.
+- `Replace Android Receiver Dry Run`: shows the uninstall/reinstall verification commands without changing the phone.
+- `Audit Receiver Signature`: compares the current APK signature with the installed phone app.
+- `Verify Device Runtime`: installs if possible, launches the phone app, and runs a synthetic USB stream/decode gate without creating a macOS virtual display.
+- `Verify Installed Device Runtime`: runs the same synthetic stream/decode gate using the already installed phone app.
+- `Verify Real Device Runtime`: runs the stricter real virtual-display capture gate after stale-display audit is clean.
+- `Verify Installed Real Device Runtime`: runs the same real virtual-display gate using the already installed phone app.
+- `Diagnose ADB USB`: prints ADB and macOS USB diagnostics when the phone is not installable.
+
+If you open `AndroidReceiver/` directly, the local SDK file
+`AndroidReceiver/local.properties` points that subproject at the same Android
+SDK path used by the root project. Because `local.properties` is intentionally
+not committed, rerun `scripts/setup-android-env.sh` if this file is missing.
+
+If command-line Gradle exits before doing any work, check `JAVA_HOME`. This
+machine previously had `JAVA_HOME=/opt/homebrew/opt/openjdk@11`, but that path
+does not exist. The project scripts now fall back to Android Studio's bundled
+JBR automatically; direct `./gradlew ...` calls should use:
+
+```sh
+JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" ./gradlew :android-receiver:assembleDebug
+```
+
+For install/run diagnostics, prefer:
+
+```sh
+scripts/install-android-receiver.sh
+scripts/verify-device-runtime.sh
+scripts/adb-usb-diagnose.sh
+```
+
+These scripts resolve `adb` from `ANDROID_HOME`, `ANDROID_SDK_ROOT`, the default
+Android Studio SDK path, and then `PATH`. This avoids Android Studio run
+configurations failing silently when their shell PATH does not include
+`platform-tools`.
+
+`scripts/android-studio-doctor.sh` is read-only by default. To let it repair
+`local.properties` as part of the run:
+
+```sh
+scripts/android-studio-doctor.sh --repair-local-properties
+```
+
 ## Android App Never Connects
 
 Check that the phone is visible to ADB:
@@ -7,6 +73,17 @@ Check that the phone is visible to ADB:
 ```sh
 adb devices
 ```
+
+If `adb devices` only prints the header, run:
+
+```sh
+scripts/adb-usb-diagnose.sh
+```
+
+If the diagnostic shows only hubs/keyboards and no Android-like USB device,
+macOS is not seeing the phone at all. Use a data-capable cable, avoid unpowered
+hubs, unlock the phone, and change the phone USB mode from charge-only to file
+transfer, MIDI, or PTP.
 
 For a fuller read-only device snapshot, run:
 
@@ -24,6 +101,10 @@ adb start-server
 adb devices
 ```
 
+If the device shows `offline`, keep the phone unlocked, unplug/replug USB, and
+restart the ADB server with the same commands above. The Mac setup window also
+reports `offline` explicitly and asks you to refresh devices after recovery.
+
 Set up the reverse tunnel again:
 
 ```sh
@@ -40,6 +121,50 @@ Then restart the Android app.
 
 The Mac spike also runs `adb reverse` automatically when its TCP server is
 enabled. Use `--no-adb-reverse` to skip that behavior.
+
+## Mac Menu Does Not Refresh Or Select The Right Device
+
+Use the setup window's `刷新设备` button after plugging or unplugging phones. A
+successful refresh clears the temporary `正在刷新设备...` message and returns to
+the current device state.
+
+Device refresh uses a bounded ADB command timeout. If ADB hangs, the app reports
+an ADB timeout instead of leaving the setup window stuck in refresh state. The
+recovery path is to unplug/replug USB, unlock the phone, approve USB debugging,
+and if needed run:
+
+```sh
+adb kill-server
+adb start-server
+```
+
+When more than one authorized phone is connected, select the target phone from
+the setup window's `投屏设备` dropdown before starting Display or Status mode.
+The menu-bar `Choose Device` submenu uses the same selected serial. If command
+line install or verification scripts are used with multiple devices, set:
+
+```sh
+ANDROID_SERIAL=<adb-serial> scripts/install-android-receiver.sh
+```
+
+The direct Gradle install task and the main phone scripts intentionally fail
+fast when no authorized device is present or when multiple devices are connected
+without `ANDROID_SERIAL`.
+
+## Start Display Fails Before Streaming
+
+Start Display runs a stale-display audit before creating a new virtual display.
+If it reports a stale Android Monitor display, log out or restart macOS before
+retrying. Stale virtual displays can make macOS capture an old or invalid
+display.
+
+If the stream backend exits immediately, the menu app shows the latest
+`/tmp/android-monitor-menubar.log` lines. Check the message in this order:
+
+- Screen Recording permission is granted for Android Monitor Host/phase0-spike.
+- No stale Android Monitor virtual displays remain.
+- The selected phone is still authorized in `adb devices`.
+- The phone app is installed and launchable.
 
 ## ADB Install Is Blocked
 
@@ -71,6 +196,44 @@ To stage the built APK in the phone's Downloads folder without running
 scripts/stage-apk.sh
 ```
 
+In Android Studio, use `Stage Android Receiver APK` for the same copy step.
+After installing from the phone's Downloads app, use `Launch Installed Android
+Receiver` to start the app without retrying `adb install`.
+
+If `adb install` fails with
+`INSTALL_PARSE_FAILED_INCONSISTENT_CERTIFICATES`, the phone already has the same
+package installed with a different signing certificate. Use `Launch Installed
+Android Receiver` if the existing app is good enough. To install the current
+build, run `Uninstall Android Receiver` first, then rerun `Run Android
+Receiver`. Do not uninstall the working app until USB install is allowed or the
+staged APK can be installed manually.
+
+To confirm the signature mismatch without changing the phone:
+
+```sh
+scripts/audit-receiver-signature.sh
+```
+
+For the same replacement path from the command line, use the guarded helper:
+
+```sh
+scripts/replace-android-receiver.sh --confirm-uninstall
+```
+
+The helper refuses to run without `--confirm-uninstall`. To inspect the exact
+commands without uninstalling anything:
+
+```sh
+scripts/replace-android-receiver.sh --confirm-uninstall --dry-run
+```
+
+The Gradle equivalent is:
+
+```sh
+./gradlew replaceReceiverDebugDryRun --console=plain
+./gradlew replaceReceiverDebug -PconfirmUninstall=true --console=plain
+```
+
 Then let the script skip `adb install` and only configure the reverse tunnel and
 launch the app:
 
@@ -82,6 +245,39 @@ After the app launches, run the decode/render test:
 
 ```sh
 scripts/phase0-stream-test.sh --width 1024 --height 600 --fps 15 --bitrate-mbps 2 --duration 10
+```
+
+For the full final phone-connected gate, run:
+
+```sh
+scripts/verify-device-runtime.sh
+```
+
+This gate preflights receiver signatures before installing. If the installed
+phone app is signed differently, it stops before `adb install -r` and prints the
+same keep-or-replace options.
+
+By default, this gate streams synthetic H.264 frames through USB so Android
+Studio can verify phone launch/decode without creating another macOS virtual
+display. For real extended-display capture, first clear stale displays, then run
+the explicit real-display variant:
+
+```sh
+scripts/display-audit.sh --fail-on-stale
+scripts/verify-device-runtime.sh --real-display
+```
+
+If the receiver is already installed and reinstall is blocked by phone policy or
+certificate mismatch, verify the runtime without replacing the app:
+
+```sh
+scripts/verify-device-runtime.sh --skip-install
+```
+
+When multiple authorized phones are connected, choose the target serial:
+
+```sh
+ANDROID_SERIAL=<adb-serial> scripts/verify-device-runtime.sh
 ```
 
 If it fails, inspect:

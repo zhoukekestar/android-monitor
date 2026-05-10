@@ -265,7 +265,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     }
 
     @Override
-    public void onSnapshot(final StatusClient.StatusSnapshot snapshot) {
+    public void onSnapshot(final StatusSnapshot snapshot) {
         runOnUiThread(new Runnable() {
             @Override
             public void run() {
@@ -418,7 +418,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         }, STATS_OVERLAY_INTERVAL_MS - elapsed);
     }
 
-    private void renderStatusPanel(StatusClient.StatusSnapshot snapshot) {
+    private void renderStatusPanel(StatusSnapshot snapshot) {
         StringBuilder builder = new StringBuilder();
         builder.append("Android Monitor Status\n");
         builder.append(snapshot.host).append('\n');

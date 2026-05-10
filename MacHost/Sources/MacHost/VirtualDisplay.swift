@@ -69,12 +69,23 @@ final class VirtualDisplay {
             return
         }
 
-        display = nil
-        descriptor = nil
-        settings = nil
+        var removalCompanion: CGVirtualDisplay?
+        var removalCompanionID: CGDirectDisplayID?
+        if waitSeconds > 0, let companion = Self.makeRemovalCompanion() {
+            removalCompanion = companion
+            removalCompanionID = CGDirectDisplayID(companion.displayID)
+        }
+        let hasRemovalCompanion = removalCompanion != nil
+
+        autoreleasepool {
+            display = nil
+            descriptor = nil
+            settings = nil
+            removalCompanion = nil
+        }
 
         let deadline = Date().addingTimeInterval(waitSeconds)
-        while isOnline() && Date() < deadline {
+        while (isOnline() || (hasRemovalCompanion && Self.isDisplayOnline(removalCompanionID))) && Date() < deadline {
             RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.05))
         }
 
@@ -90,6 +101,14 @@ final class VirtualDisplay {
     }
 
     func isOnline() -> Bool {
+        Self.isDisplayOnline(displayID)
+    }
+
+    private static func isDisplayOnline(_ displayID: CGDirectDisplayID?) -> Bool {
+        guard let displayID else {
+            return false
+        }
+
         let maxDisplays: UInt32 = 32
         let displays = UnsafeMutablePointer<CGDirectDisplayID>.allocate(capacity: Int(maxDisplays))
         defer { displays.deallocate() }
@@ -104,6 +123,34 @@ final class VirtualDisplay {
             return true
         }
         return false
+    }
+
+    private static func makeRemovalCompanion() -> CGVirtualDisplay? {
+        let displayDescriptor = CGVirtualDisplayDescriptor()
+        displayDescriptor.name = "Android Monitor Removal Helper"
+        displayDescriptor.maxPixelsWide = 32
+        displayDescriptor.maxPixelsHigh = 32
+        displayDescriptor.vendorID = 0xEEEE
+        displayDescriptor.productID = UInt32.random(in: 1...UInt32.max)
+        displayDescriptor.serialNum = UInt32.random(in: 1...UInt32.max)
+        displayDescriptor.sizeInMillimeters = CGSize(width: 8, height: 8)
+        displayDescriptor.queue = DispatchQueue.global(qos: .utility)
+
+        guard let companion = CGVirtualDisplay(descriptor: displayDescriptor) else {
+            return nil
+        }
+
+        let displaySettings = CGVirtualDisplaySettings()
+        displaySettings.hiDPI = 0
+        displaySettings.modes = [
+            CGVirtualDisplayMode(width: 32, height: 32, refreshRate: 60)
+        ]
+
+        guard companion.apply(displaySettings) else {
+            return nil
+        }
+
+        return companion
     }
 
     func pixelSize() -> (width: Int, height: Int) {

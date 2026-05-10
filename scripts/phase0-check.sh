@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MAC_DIR="$ROOT_DIR/MacHost"
 ANDROID_DIR="$ROOT_DIR/AndroidReceiver"
+. "$ROOT_DIR/scripts/lib/adb-path.sh"
 GRADLEW="$ROOT_DIR/gradlew"
 APK_PATH="$ANDROID_DIR/app/build/outputs/apk/debug/android-receiver-debug.apk"
 SMOKE_H264="/tmp/android-monitor-phase0-check.h264"
@@ -162,24 +163,18 @@ if [[ "$CAPTURE_PERMISSION_STATUS" -ne 0 ]]; then
     echo "       Grant Screen/System Audio Recording to the launcher terminal/app." >&2
 fi
 
-if ! command -v adb >/dev/null 2>&1; then
-    echo "[FAIL] adb was not found on PATH" >&2
+ADB_BIN="$(resolve_adb_bin)"
+if [[ -z "$ADB_BIN" ]]; then
+    echo "[FAIL] adb was not found from ANDROID_HOME, ANDROID_SDK_ROOT, ~/Library/Android/sdk, or PATH." >&2
     exit 1
 fi
 
 echo "==> Checking authorized Android device"
-ADB_DEVICES="$(adb devices)"
-echo "$ADB_DEVICES"
-
-if ! printf '%s\n' "$ADB_DEVICES" | awk 'NR > 1 && $2 == "device" { found = 1 } END { exit found ? 0 : 1 }'; then
-    echo "[FAIL] No authorized adb device found." >&2
-    echo "       Unlock the phone and accept the USB debugging prompt, then rerun this script." >&2
-    exit 3
-fi
+require_single_authorized_adb_device "$ADB_BIN"
 
 if [[ "$SKIP_INSTALL" -eq 1 ]]; then
     echo "==> Verifying AndroidReceiver is already installed"
-    INSTALLED_PACKAGES="$(adb shell pm list packages com.androidmonitor.receiver | tr -d '\r')"
+    INSTALLED_PACKAGES="$("$ADB_BIN" shell pm list packages com.androidmonitor.receiver | tr -d '\r')"
     if ! printf '%s\n' "$INSTALLED_PACKAGES" | grep -q '^package:com\.androidmonitor\.receiver$'; then
         cat >&2 <<'EOF'
 [FAIL] AndroidReceiver is not installed on the device.
@@ -193,7 +188,7 @@ EOF
 else
     echo "==> Installing AndroidReceiver"
     set +e
-    INSTALL_OUTPUT="$(adb install -r -d "$APK_PATH" 2>&1)"
+    INSTALL_OUTPUT="$("$ADB_BIN" install -r -d "$APK_PATH" 2>&1)"
     INSTALL_STATUS=$?
     set -e
     printf '%s\n' "$INSTALL_OUTPUT"
@@ -211,18 +206,28 @@ else
 EOF
             exit 5
         fi
+        if printf '%s\n' "$INSTALL_OUTPUT" | grep -q 'INSTALL_PARSE_FAILED_INCONSISTENT_CERTIFICATES'; then
+            cat >&2 <<'EOF'
+[FAIL] AndroidReceiver is already installed with a different signing certificate.
+       To keep using the existing app, launch it without reinstalling:
+       ./gradlew launchReceiverDebug --console=plain
+       To install this build, uninstall Android Monitor from the phone first,
+       then rerun this script.
+EOF
+            exit 7
+        fi
         echo "[FAIL] adb install failed." >&2
         exit "$INSTALL_STATUS"
     fi
 fi
 
 echo "==> Configuring adb reverse for USB stream"
-adb reverse --remove tcp:38888 >/dev/null 2>&1 || true
-adb reverse tcp:38888 tcp:38888
+"$ADB_BIN" reverse --remove tcp:38888 >/dev/null 2>&1 || true
+"$ADB_BIN" reverse tcp:38888 tcp:38888
 echo "[OK] adb reverse command accepted: tcp:38888 -> tcp:38888"
 
 echo "==> Launching AndroidReceiver"
-adb shell am start -n com.androidmonitor.receiver/.MainActivity
+"$ADB_BIN" shell am start -n com.androidmonitor.receiver/.MainActivity
 
 if [[ "$CAPTURE_PERMISSION_STATUS" -ne 0 ]]; then
     cat <<EOF

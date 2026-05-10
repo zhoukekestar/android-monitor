@@ -122,17 +122,76 @@ scripts/display-audit.sh --count
 检查手机、安装状态和解码能力：
 
 ```sh
+scripts/adb-usb-diagnose.sh
 scripts/device-audit.sh
 ```
 
 如果需要手动安装 Android 客户端：
 
 ```sh
+scripts/install-android-receiver.sh
+```
+
+如果手机提示 `INSTALL_FAILED_USER_RESTRICTED`，说明手机系统禁止 USB
+安装。可以先把 APK 推到手机 Downloads，再在手机上手动点安装：
+
+```sh
+scripts/stage-apk.sh
+```
+
+如果手机端已经安装了客户端，只想验证扩展屏链路是否可用：
+
+```sh
+scripts/verify-device-runtime.sh --skip-install
+```
+
+默认验证使用 synthetic H.264 帧，只检查 USB、手机端连接和解码，不创建
+macOS 虚拟屏。需要真实扩展屏捕获时，先确认没有残留虚拟屏，再显式运行：
+
+```sh
+scripts/display-audit.sh --fail-on-stale
+scripts/verify-device-runtime.sh --skip-install --real-display
+```
+
+如果需要替换手机上不同签名的旧客户端，使用显式确认脚本：
+
+```sh
+scripts/audit-receiver-signature.sh
+scripts/replace-android-receiver.sh --confirm-uninstall
+```
+
+查看它会执行什么但不卸载：
+
+```sh
+scripts/replace-android-receiver.sh --confirm-uninstall --dry-run
+./gradlew replaceReceiverDebugDryRun --console=plain
+```
+
+如果只需要构建 APK：
+
+```sh
 JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" ./gradlew :android-receiver:assembleDebug
-adb install -r -d AndroidReceiver/app/build/outputs/apk/debug/android-receiver-debug.apk
 ```
 
 ## 开发命令
+
+初始化本机 Android SDK 路径：
+
+```sh
+scripts/setup-android-env.sh
+```
+
+Android Studio/ADB 环境只读诊断：
+
+```sh
+scripts/android-studio-doctor.sh
+```
+
+如果希望诊断时顺便重写本机 SDK 配置：
+
+```sh
+scripts/android-studio-doctor.sh --repair-local-properties
+```
 
 Mac 端构建：
 
